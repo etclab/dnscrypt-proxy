@@ -27,7 +27,7 @@
 ##
 ## Remove the leading # first to enable this; lines starting with # are ignored.
 
-server_names = ['odoh-cloudflare']
+server_names = ['cloudflare']
 
 
 ## List of local addresses and ports to listen to. Can be IPv4 and/or IPv6.
@@ -37,7 +37,7 @@ server_names = ['odoh-cloudflare']
 ## To listen to all IPv4 addresses, use `listen_addresses = ['0.0.0.0:53']`
 ## To listen to all IPv4+IPv6 addresses, use `listen_addresses = ['[::]:53']`
 
-listen_addresses = ['127.0.0.1:53']
+listen_addresses = ['127.0.0.1:5300']
 
 
 ## Maximum number of simultaneous client connections to accept
@@ -69,10 +69,10 @@ ipv6_servers = false
 dnscrypt_servers = false
 
 # Use servers implementing the DNS-over-HTTPS protocol
-doh_servers = false
+doh_servers = true
 
 # Use servers implementing the Oblivious DoH protocol
-odoh_servers = true
+odoh_servers = false
 
 
 ## Require servers defined by remote sources to satisfy specific properties
@@ -548,7 +548,7 @@ cache_neg_max_ttl = 600
 ## Path to the query log file (absolute, or relative to the same directory as the config file)
 ## Can be set to /dev/stdout in order to log to the standard output.
 
-file = 'query.log'
+file = 'query-doh.log'
 
 
 ## Query log format (currently supported: tsv and ltsv)
@@ -789,18 +789,18 @@ prefix = ''
 
 ### ODoH (Oblivious DoH) servers and relays
 
-[sources.odoh-servers]
-  urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/odoh-servers.md', 'https://download.dnscrypt.info/resolvers-list/v3/odoh-servers.md']
-  cache_file = 'odoh-servers.md'
-  minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
-  refresh_delay = 73
-  prefix = ''
-[sources.odoh-relays]
-  urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/odoh-relays.md', 'https://download.dnscrypt.info/resolvers-list/v3/odoh-relays.md']
-  cache_file = 'odoh-relays.md'
-  minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
-  refresh_delay = 73
-  prefix = ''
+# [sources.odoh-servers]
+#   urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/odoh-servers.md', 'https://download.dnscrypt.info/resolvers-list/v3/odoh-servers.md']
+#   cache_file = 'odoh-servers.md'
+#   minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
+#   refresh_delay = 73
+#   prefix = ''
+# [sources.odoh-relays]
+#   urls = ['https://raw.githubusercontent.com/DNSCrypt/dnscrypt-resolvers/master/v3/odoh-relays.md', 'https://download.dnscrypt.info/resolvers-list/v3/odoh-relays.md']
+#   cache_file = 'odoh-relays.md'
+#   minisign_key = 'RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3'
+#   refresh_delay = 73
+#   prefix = ''
 
 ### Quad9
 

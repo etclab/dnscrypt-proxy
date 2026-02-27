@@ -20,4 +20,4 @@ contrib/msi/*.wixobj
 TODO.md
 LOG.md
 
-*.log
+dnscrypt-proxy/*.log
