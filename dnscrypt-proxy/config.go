@@ -108,6 +108,14 @@ type Config struct {
 	DNS64                    DNS64Config                 `toml:"dns64"`
 	EDNSClientSubnet         []string                    `toml:"edns_client_subnet"`
 	IPEncryption             IPEncryptionConfig          `toml:"ip_encryption"`
+	CODoH                    CODoHGlobalConfig           `toml:"codoh"`
+}
+
+// CODoHGlobalConfig holds CODoH-specific configuration from [codoh] TOML section.
+type CODoHGlobalConfig struct {
+	Enabled     bool     `toml:"enabled"`
+	ServerNames []string `toml:"server_names"` // ODoH servers to upgrade to CODoH
+	ProxyHost   string   `toml:"proxy_host"`   // proxy with /enclave-keys + /proxy endpoints
 }
 
 func newConfig() Config {

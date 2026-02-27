@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"math/rand"
 	"net"
 	"time"
@@ -149,6 +150,11 @@ func processODoHQuery(
 	pluginsState *PluginsState,
 	query []byte,
 ) ([]byte, error) {
+	// Branch to CODoH if configured for this server
+	if serverInfo.codohConfig != nil {
+		return processCODoHQuery(proxy, serverInfo, pluginsState, query)
+	}
+
 	tid := TransactionID(query)
 	if len(serverInfo.odohTargetConfigs) == 0 {
 		return nil, nil
@@ -209,6 +215,166 @@ func processODoHQuery(
 	pluginsState.ApplyLoggingPlugins(&proxy.pluginsGlobals)
 	serverInfo.noticeFailure(proxy)
 
+	return nil, err
+}
+
+// processCODoHQuery - Processes a query using the CODoH protocol (Cached ODoH).
+// Wraps a standard ODoH query with an enclave-encrypted cache query.
+func processCODoHQuery(
+	proxy *Proxy,
+	serverInfo *ServerInfo,
+	pluginsState *PluginsState,
+	query []byte,
+) ([]byte, error) {
+	tid := TransactionID(query)
+	if len(serverInfo.odohTargetConfigs) == 0 {
+		return nil, nil
+	}
+
+	serverInfo.noticeBegin(proxy)
+
+	// 1. Build standard ODoH query Q_T (encrypted to target's pk_T)
+	target := serverInfo.odohTargetConfigs[rand.Intn(len(serverInfo.odohTargetConfigs))]
+	odohQuery, err := target.encryptQuery(query)
+	if err != nil {
+		dlog.Errorf("CODoH: failed to encrypt ODoH query for [%v]: %v", serverInfo.Name, err)
+		return nil, err
+	}
+
+	// 2. Get enclave public key and encrypt Q_E
+	pkE, err := serverInfo.codohConfig.GetOrFetchPubKey(proxy.xTransport)
+	if err != nil {
+		dlog.Warnf("CODoH: failed to get enclave key for [%v]: %v — falling back to standard ODoH", serverInfo.Name, err)
+		return processODoHQueryFallback(proxy, serverInfo, pluginsState, query, tid)
+	}
+
+	// Extract domain and type from the DNS query for canonicalization
+	msg := dns.Msg{Data: query}
+	if err := msg.Unpack(); err != nil {
+		dlog.Errorf("CODoH: failed to unpack query: %v", err)
+		return nil, err
+	}
+	if len(msg.Question) == 0 {
+		dlog.Error("CODoH: query has no questions")
+		return nil, err
+	}
+	question := msg.Question[0]
+	canonQuery := CanonicalizeQuery(question.Header().Name, dns.RRToType(question))
+	qe, kr, err := EncryptQueryE(pkE, []byte(canonQuery))
+	if err != nil {
+		dlog.Warnf("CODoH: failed to encrypt Q_E for [%v]: %v — falling back to standard ODoH", serverInfo.Name, err)
+		return processODoHQueryFallback(proxy, serverInfo, pluginsState, query, tid)
+	}
+	qe, err = PadToBucket(qe, DefaultQueryPadBuckets)
+	if err != nil {
+		dlog.Warnf("CODoH: failed to pad Q_E for [%v]: %v — falling back to standard ODoH", serverInfo.Name, err)
+		return processODoHQueryFallback(proxy, serverInfo, pluginsState, query, tid)
+	}
+	qeBase64 := base64.StdEncoding.EncodeToString(qe)
+
+	// 3. Build relay URL (reuse existing relay)
+	targetURL := serverInfo.URL
+	if serverInfo.Relay != nil && serverInfo.Relay.ODoH != nil {
+		targetURL = serverInfo.Relay.ODoH.URL
+	}
+
+	// 4. Pad Q_T and send via CODoHQuery transport (reads full response body)
+	// CODoH has a longer pipeline (proxy → enclave IPC + target forward + chunk assembly),
+	// so use 3x the configured timeout to avoid premature Client.Timeout cancellation.
+	paddedQT, err := PadToBucket(odohQuery.odohMessage, DefaultQueryPadBuckets)
+	if err != nil {
+		dlog.Warnf("CODoH: failed to pad Q_T for [%v]: %v", serverInfo.Name, err)
+		return nil, err
+	}
+	codohTimeout := proxy.timeout * 3
+	responseBody, responseCode, respHeaders, _, err := proxy.xTransport.CODoHQuery(
+		targetURL, paddedQT, qeBase64, codohTimeout)
+	if err != nil {
+		dlog.Warnf("CODoH: query failed for [%v] (HTTP %d): %v", serverInfo.Name, responseCode, err)
+		serverInfo.noticeFailure(proxy)
+		pluginsState.returnCode = PluginsReturnCodeNetworkError
+		pluginsState.ApplyLoggingPlugins(&proxy.pluginsGlobals)
+		return nil, err
+	}
+
+	// 5. Handle key rotation header
+	if respHeaders != nil && respHeaders.Get("X-CoDOH-Key-Rotated") == "true" {
+		dlog.Infof("CODoH: enclave key rotation detected for [%v]", serverInfo.Name)
+		go serverInfo.codohConfig.RefreshPubKey(proxy.xTransport)
+	}
+
+	// Log enclave errors
+	if respHeaders != nil {
+		if enclaveErr := respHeaders.Get("X-CoDOH-Enclave-Error"); enclaveErr != "" {
+			dlog.Warnf("CODoH: enclave error for [%v]: %s", serverInfo.Name, enclaveErr)
+		}
+	}
+
+	// 6. Parse response based on content type
+	contentType := ""
+	if respHeaders != nil {
+		contentType = respHeaders.Get("Content-Type")
+	}
+	result, err := ParseCODoHResponse(contentType, responseBody, kr, &odohQuery)
+	if err != nil {
+		dlog.Warnf("CODoH: response parsing failed for [%v]: %v", serverInfo.Name, err)
+		serverInfo.noticeFailure(proxy)
+		pluginsState.returnCode = PluginsReturnCodeNetworkError
+		pluginsState.ApplyLoggingPlugins(&proxy.pluginsGlobals)
+		return nil, err
+	}
+
+	if result.CacheHit {
+		dlog.Debugf("CODoH: cache HIT for [%v]", serverInfo.Name)
+	} else {
+		dlog.Debugf("CODoH: cache MISS for [%v]", serverInfo.Name)
+	}
+
+	response := result.Response
+	if len(response) >= MinDNSPacketSize {
+		SetTransactionID(response, tid)
+	}
+
+	return response, nil
+}
+
+// processODoHQueryFallback falls back to standard ODoH when CODoH setup fails.
+func processODoHQueryFallback(
+	proxy *Proxy,
+	serverInfo *ServerInfo,
+	pluginsState *PluginsState,
+	query []byte,
+	tid uint16,
+) ([]byte, error) {
+	target := serverInfo.odohTargetConfigs[rand.Intn(len(serverInfo.odohTargetConfigs))]
+	odohQuery, err := target.encryptQuery(query)
+	if err != nil {
+		return nil, err
+	}
+
+	targetURL := serverInfo.URL
+	if serverInfo.Relay != nil && serverInfo.Relay.ODoH != nil {
+		targetURL = serverInfo.Relay.ODoH.URL
+	}
+
+	responseBody, responseCode, _, _, err := proxy.xTransport.ObliviousDoHQuery(
+		serverInfo.useGet, targetURL, odohQuery.odohMessage, proxy.timeout)
+
+	if err == nil && len(responseBody) > 0 && responseCode == 200 {
+		response, err := odohQuery.decryptResponse(responseBody)
+		if err != nil {
+			serverInfo.noticeFailure(proxy)
+			return nil, err
+		}
+		if len(response) >= MinDNSPacketSize {
+			SetTransactionID(response, tid)
+		}
+		return response, nil
+	}
+
+	serverInfo.noticeFailure(proxy)
+	pluginsState.returnCode = PluginsReturnCodeNetworkError
+	pluginsState.ApplyLoggingPlugins(&proxy.pluginsGlobals)
 	return nil, err
 }
 

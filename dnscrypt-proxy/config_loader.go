@@ -474,6 +474,12 @@ func configureSourceRestrictions(proxy *Proxy, flags *ConfigFlags, config *Confi
 	proxy.SourceDNSCrypt = config.SourceDNSCrypt
 	proxy.SourceDoH = config.SourceDoH
 	proxy.SourceODoH = config.SourceODoH
+
+	// CODoH config
+	proxy.codohConfig = config.CODoH
+	if proxy.codohConfig.Enabled {
+		dlog.Noticef("CODoH enabled for servers: %v via proxy: %s", proxy.codohConfig.ServerNames, proxy.codohConfig.ProxyHost)
+	}
 }
 
 // determineNetprobeAddress - Determines the address to use for network probing

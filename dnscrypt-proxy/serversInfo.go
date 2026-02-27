@@ -64,6 +64,7 @@ type ServerInfo struct {
 	Proto              stamps.StampProtoType
 	useGet             bool
 	odohTargetConfigs  []ODoHTargetConfig
+	codohConfig        *CODoHConfig // non-nil if CODoH is enabled for this server
 
 	// WP2 strategy fields
 	totalQueries   uint64    // Total queries sent to this server
@@ -1010,6 +1011,35 @@ func _fetchODoHTargetInfo(proxy *Proxy, name string, stamp stamps.ServerStamp, i
 		Scheme: "https",
 		Host:   stamp.ProviderName,
 		Path:   stamp.Path,
+	}
+
+	// CODoH fast path: skip the ODoH test query loop.
+	// The codohproxy is not a standard ODoH relay — sending plain ODoH test
+	// queries through it will hang or fail. Trust the configs from the
+	// well-known endpoint and attach CODoH state directly.
+	if proxy.codohConfig.Enabled {
+		for _, codohName := range proxy.codohConfig.ServerNames {
+			if codohName == name {
+				serverInfo := ServerInfo{
+					Proto:             stamps.StampProtoTypeODoHTarget,
+					Name:              name,
+					Timeout:           proxy.timeout,
+					URL:               targetURL,
+					HostName:          stamp.ProviderName,
+					initialRtt:        1, // will be updated on first real query
+					useGet:            false,
+					Relay:             relay,
+					odohTargetConfigs: odohTargetConfigs,
+					codohConfig:       NewCODoHConfig(proxy.codohConfig.ProxyHost),
+				}
+				if isNew {
+					dlog.Noticef("[%s] OK (CODoH) via proxy %s", name, proxy.codohConfig.ProxyHost)
+				} else {
+					dlog.Infof("[%s] OK (CODoH) via proxy %s", name, proxy.codohConfig.ProxyHost)
+				}
+				return serverInfo, nil
+			}
+		}
 	}
 
 	workingConfigs := make([]ODoHTargetConfig, 0)

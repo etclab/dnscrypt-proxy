@@ -877,3 +877,165 @@ func (xTransport *XTransport) ObliviousDoHQuery(
 ) ([]byte, int, *tls.ConnectionState, time.Duration, error) {
 	return xTransport.dohLikeQuery("application/oblivious-dns-message", useGet, url, body, timeout)
 }
+
+// CODoHQuery sends a CODoH query with an X-CoDOH-Query header.
+// Uses the standard Fetch path (reads full body), then returns the body bytes
+// along with response headers needed by the CODoH layer.
+func (xTransport *XTransport) CODoHQuery(
+	url *url.URL,
+	body []byte,
+	qeBase64 string,
+	timeout time.Duration,
+) ([]byte, int, http.Header, time.Duration, error) {
+	return xTransport.FetchWithExtraHeaders(
+		"POST", url,
+		"application/codoh-response, application/codoh-cached, application/oblivious-dns-message",
+		"application/oblivious-dns-message",
+		&body, timeout, false,
+		map[string]string{"X-CoDOH-Query": qeBase64},
+	)
+}
+
+// FetchWithExtraHeaders extends Fetch to inject additional headers into the request.
+// Returns response body, status code, response headers, RTT, and error.
+func (xTransport *XTransport) FetchWithExtraHeaders(
+	method string,
+	url *url.URL,
+	accept string,
+	contentType string,
+	body *[]byte,
+	timeout time.Duration,
+	compress bool,
+	extraHeaders map[string]string,
+) ([]byte, int, http.Header, time.Duration, error) {
+	if timeout <= 0 {
+		timeout = xTransport.timeout
+	}
+	client := http.Client{
+		Transport: xTransport.transport,
+		Timeout:   timeout,
+	}
+	host, port := ExtractHostAndPort(url.Host, 443)
+	hasAltSupport := false
+
+	if xTransport.h3Transport != nil {
+		if xTransport.http3Probe {
+			client.Transport = xTransport.h3Transport
+		} else {
+			xTransport.altSupport.RLock()
+			var altPort uint16
+			altPort, hasAltSupport = xTransport.altSupport.cache[url.Host]
+			xTransport.altSupport.RUnlock()
+			if hasAltSupport && altPort > 0 {
+				if int(altPort) == port {
+					client.Transport = xTransport.h3Transport
+				}
+			}
+		}
+	}
+	header := map[string][]string{"User-Agent": {"dnscrypt-proxy"}}
+	if len(accept) > 0 {
+		header["Accept"] = []string{accept}
+	}
+	if len(contentType) > 0 {
+		header["Content-Type"] = []string{contentType}
+	}
+	header["Cache-Control"] = []string{"max-stale"}
+	for k, v := range extraHeaders {
+		header[k] = []string{v}
+	}
+	if body != nil {
+		h := sha512.Sum512(*body)
+		qs := url.Query()
+		qs.Add("body_hash", hex.EncodeToString(h[:32]))
+		url2 := *url
+		url2.RawQuery = qs.Encode()
+		url = &url2
+	}
+	if xTransport.proxyDialer == nil && strings.HasSuffix(host, ".onion") {
+		return nil, 0, nil, 0, errors.New("Onion service is not reachable without Tor")
+	}
+	if err := xTransport.resolveAndUpdateCache(host); err != nil {
+		dlog.Errorf("Unable to resolve [%v]", host)
+		return nil, 0, nil, 0, err
+	}
+	if compress && body == nil {
+		header["Accept-Encoding"] = []string{"gzip"}
+	}
+	req := &http.Request{
+		Method: method,
+		URL:    url,
+		Header: header,
+		Close:  false,
+	}
+	if body != nil {
+		req.ContentLength = int64(len(*body))
+		req.Body = io.NopCloser(bytes.NewReader(*body))
+	}
+	start := time.Now()
+	resp, err := client.Do(req)
+	rtt := time.Since(start)
+
+	if err != nil && client.Transport == xTransport.h3Transport {
+		xTransport.altSupport.Lock()
+		xTransport.altSupport.cache[url.Host] = 0
+		xTransport.altSupport.Unlock()
+		client.Transport = xTransport.transport
+		if body != nil {
+			req.Body = io.NopCloser(bytes.NewReader(*body))
+		}
+		start = time.Now()
+		resp, err = client.Do(req)
+		rtt = time.Since(start)
+	}
+
+	if err == nil {
+		if resp == nil {
+			err = errors.New("Webserver returned an error")
+		} else if resp.StatusCode < 200 || resp.StatusCode > 299 {
+			err = errors.New(resp.Status)
+		}
+	} else {
+		xTransport.transport.CloseIdleConnections()
+	}
+	statusCode := 503
+	var respHeader http.Header
+	if resp != nil {
+		defer resp.Body.Close()
+		statusCode = resp.StatusCode
+		respHeader = resp.Header
+	}
+	if err != nil {
+		return nil, statusCode, respHeader, rtt, err
+	}
+
+	if xTransport.h3Transport != nil && !hasAltSupport {
+		if alt, found := resp.Header["Alt-Svc"]; found {
+			altPort := uint16(port & 0xffff)
+			for i, xalt := range alt {
+				for j, v := range strings.Split(xalt, ";") {
+					if i >= 8 || j >= 16 {
+						break
+					}
+					v = strings.TrimSpace(v)
+					if after, ok := strings.CutPrefix(v, "h3=\":"); ok {
+						v = strings.TrimSuffix(after, "\"")
+						if xAltPort, err := strconv.ParseUint(v, 10, 16); err == nil && xAltPort <= 65535 {
+							altPort = uint16(xAltPort)
+							break
+						}
+					}
+				}
+			}
+			xTransport.altSupport.Lock()
+			xTransport.altSupport.cache[url.Host] = altPort
+			xTransport.altSupport.Unlock()
+		}
+	}
+
+	bin, err := io.ReadAll(io.LimitReader(resp.Body, MaxHTTPBodyLength))
+	if err != nil {
+		return nil, statusCode, respHeader, rtt, err
+	}
+	return bin, statusCode, respHeader, rtt, err
+}

@@ -109,6 +109,7 @@ type Proxy struct {
 	listenersMu                   sync.Mutex
 	ipCryptConfig                 *IPCryptConfig
 	udpConnPool                   *UDPConnPool
+	codohConfig                   CODoHGlobalConfig
 }
 
 func (proxy *Proxy) registerUDPListener(conn *net.UDPConn) {
