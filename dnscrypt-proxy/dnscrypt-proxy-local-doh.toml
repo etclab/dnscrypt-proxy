@@ -8,7 +8,7 @@
 #                             Global settings                                  #
 ###############################################################################
 
-server_names = ['local-odoh']
+server_names = ['local-doh']
 
 listen_addresses = ['127.0.0.1:53']
 
@@ -24,9 +24,9 @@ ipv6_servers = false
 
 dnscrypt_servers = false
 
-doh_servers = false
+doh_servers = true
 
-odoh_servers = true
+odoh_servers = false
 
 require_dnssec = false
 
@@ -100,21 +100,9 @@ cache = false
 
 [query_log]
 
-file = 'query-local-odoh.log'
+file = 'query-local-doh.log'
 
 format = 'tsv'
-
-###############################################################################
-#                          Anonymized DNS                                      #
-###############################################################################
-
-[anonymized_dns]
-
-routes = [
-  { server_name='local-odoh', via=['local-odoh-relay'] }
-]
-
-skip_incompatible = false
 
 ###############################################################################
 #                           IP Encryption                                      #
@@ -139,8 +127,5 @@ enabled = false
 ###############################################################################
 
 [static]
-  [static.local-odoh]
-  stamp = 'sdns://BQcAAAAAAAAADjEyNy4wLjAuMTo4NDQzCi9kbnMtcXVlcnk'
-
-  [static.local-odoh-relay]
-  stamp = 'sdns://hQcAAAAAAAAADjEyNy4wLjAuMTo4MDgwAA4xMjcuMC4wLjE6ODA4MAYvcHJveHk'
+  [static.local-doh]
+  stamp = 'sdns://AgcAAAAAAAAADjEyNy4wLjAuMTo4NDQzAA4xMjcuMC4wLjE6ODQ0MwovZG5zLXF1ZXJ5'
