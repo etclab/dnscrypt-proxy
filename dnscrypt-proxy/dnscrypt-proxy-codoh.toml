@@ -1067,6 +1067,7 @@ enabled = true
 server_names = ['codoh-target']
 proxy_host = '127.0.0.1:8080'
 
+## TODO: when running benchmark in the cloud how does "stamp" change?
 ## No remote sources — we use static entries only
 [sources]
 ## ODoH target stamp: localhost:8443, path=/dns-query
