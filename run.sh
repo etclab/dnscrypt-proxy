@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROXY_DIR="${SCRIPT_DIR}/dnscrypt-proxy"
-CONFIG_FILE="${PROXY_DIR}/dnscrypt-proxy.toml"
+CONFIG_FILE="${PROXY_DIR}/dnscrypt-proxy-odoh.toml"
 
 # --- Tear down any existing dnscrypt-proxy ---
 if pgrep -x dnscrypt-proxy >/dev/null 2>&1; then
