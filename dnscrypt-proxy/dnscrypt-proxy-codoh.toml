@@ -1,0 +1,54 @@
+## CoDOH dnscrypt-proxy config
+## Based on example-dnscrypt-proxy.toml with CoDOH-specific settings.
+##
+## Usage: ./dnscrypt-proxy -config dnscrypt-proxy-codoh.toml
+
+listen_addresses = ['127.0.0.1:53']
+max_clients = 250
+ipv4_servers = true
+ipv6_servers = false
+dnscrypt_servers = false
+doh_servers = false
+odoh_servers = true
+require_dnssec = false
+require_nolog = false
+require_nofilter = false
+force_tcp = false
+timeout = 10000
+keepalive = 30
+use_syslog = false
+log_level = 2
+cache = true
+server_names = ['codoh-target']
+
+bootstrap_resolvers = ['1.1.1.1:53', '8.8.8.8:53']
+netprobe_timeout = 0
+
+[query_log]
+file = 'query-codoh.log'
+
+## Trust the .signing certs (self-signed) from the coredns repo
+## Update root_ca path to match your environment
+[doh_client_x509_auth]
+creds = [{ server_name = '*', root_ca = '../../coredns/.signing/target.pem' }]
+
+## Route ODoH queries through the CoDOH proxy relay
+[anonymized_dns]
+routes = [{ server_name = 'codoh-target', via = ['codoh-relay'] }]
+
+## Enable CoDOH protocol for the target
+[codoh]
+enabled = true
+server_names = ['codoh-target']
+proxy_host = '127.0.0.1:8080'
+
+## No remote sources — we use static entries only
+[sources]
+
+## ODoH target stamp: localhost:8443, path=/dns-query
+[static.codoh-target]
+stamp = 'sdns://BQAAAAAAAAAADmxvY2FsaG9zdDo4NDQzCi9kbnMtcXVlcnk'
+
+## ODoH relay stamp: 127.0.0.1:8080, provider=localhost:8080, path=/proxy
+[static.codoh-relay]
+stamp = 'sdns://hQAAAAAAAAAADjEyNy4wLjAuMTo4MDgwAA5sb2NhbGhvc3Q6ODA4MAYvcHJveHk'
